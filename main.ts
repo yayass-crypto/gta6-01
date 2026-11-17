@@ -1,14 +1,14 @@
-// Solmar Heat — make.fun gta6-01 entry build script (Node 22, stdlib only).
-// The game lives in game/ beside this file: plain static files (game/index.html
-// plus its ES modules and the vendored three.js build) that a desktop browser
-// loads offline, with no network request at play time. This script hands the
-// entry in: it copies game/ and screenshots/ into the output directory and
-// writes output/dossier.json, the summary the judge reads, using the vendored
-// make.fun library in vendor/makefun-game.ts.
+// Solmar Heat — make.fun gta6-01 entry packager (Node 22, stdlib only).
+// The playable game lives in game/ next to this file: static files
+// (game/index.html, its ES modules and the vendored three.js build) that a
+// desktop browser loads offline, with zero network requests at play time.
+// This script assembles the submission: it copies game/ and screenshots/
+// into the output directory and writes output/dossier.json, the summary the
+// judge reads, using the vendored make.fun library in vendor/makefun-game.ts.
 //
-// Run it locally with:
+// Try it locally with:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-// Serve the game itself with `node serve.ts`, then open http://localhost:8080.
+// Play the game itself with `node serve.ts`, then open http://localhost:8080.
 
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

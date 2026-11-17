@@ -198,8 +198,6 @@ function bindInput() {
         G.addWanted(1, 'stole a car');
         G.enterCar(car);
         showToast(G, 'Car stolen! Lose the heat or lay low.');
-      } else if (G.mission && G.mission.def.steps[G.mission.step].kind === 'grab') {
-        // handled in missions update
       } else {
         // try the parked player car nearby (own car)
         const own = G.parkedCar;
@@ -341,18 +339,6 @@ function boot() {
   initHud(G);
   initAudio(G);
   bindInput();
-
-  // expose probe helpers
-  G.startGame = G.startGame.bind(G);
-
-  // mission 1 steal: entering the marked car advances the mission
-  const origEnter = G.enterCar;
-  G.enterCar = function (car) {
-    origEnter(car);
-    if (car.isMarked && G.mission && G.mission.def.id === 1 && G.mission.step === 0) {
-      // advance handled by missions update (checks isMarked)
-    }
-  };
 
   G.showTitle(true);
   G.hud?.update();

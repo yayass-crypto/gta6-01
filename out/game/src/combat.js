@@ -79,7 +79,6 @@ export function shoot(G) {
       G.scene.remove(c.mesh);
       G.footCops.splice(G.footCops.indexOf(c), 1);
       G.addWanted(2, 'killed a cop');
-      G.addCash(0);
     } else if (hit.ref.type === 'gang') {
       const gm = hit.ref.obj;
       gm.hp -= 34;

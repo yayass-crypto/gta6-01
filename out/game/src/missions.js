@@ -173,7 +173,6 @@ export function updateMissions(G, dt) {
     else if (d < 6 && !G.player.inCar) G.showToast('You need the car to deliver!');
   } else if (step.kind === 'grab') {
     if (d < 5 && G.keys['KeyE']) {
-      G.addCash(0);
       G.hudPopup('Cash grabbed!', '#FFD700');
       advanceStep(G);
     }

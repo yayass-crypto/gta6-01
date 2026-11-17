@@ -1,5 +1,5 @@
 // city.js — procedural city of Solmar: grid, roads, buildings, props, beach, port.
-// All art is generated in code (canvas textures + box geometry). No external assets.
+// Every visual is generated in code (canvas textures + box geometry). No external assets.
 import * as THREE from 'three';
 
 export const PITCH = 52;      // block pitch (road centre to road centre)
@@ -108,6 +108,8 @@ const BILLBOARDS = [
   ['SUNSET SURF', '#2980b9', 'Boards & lessons'],
   ['MR. FIX-IT', '#27ae60', 'We fix anything*'],
   ['CASINO SOL', '#f39c12', 'Play it lucky'],
+  ['PIER PIZZA', '#e74c3c', 'Slice by the sea'],
+  ['SOLMAR TAXI', '#f1c40f', 'Ride anywhere, $5'],
 ];
 
 export function buildCity(G) {
@@ -204,6 +206,7 @@ export function buildCity(G) {
   // billboards with original fake ads
   const bbGeo = new THREE.BoxGeometry(10, 4.5, 0.4);
   const poleGeo = new THREE.CylinderGeometry(0.3, 0.3, 7, 6);
+  const spots = [[-78, -130, 0], [78, 26, 1], [-26, 130, 2], [130, -78, 3], [26, -182, 4], [-182, 78, 5], [-130, 182, 1], [182, 130, 3]];
   BILLBOARDS.forEach(([title, bg, sub], i) => {
     const c = document.createElement('canvas');
     c.width = 256; c.height = 112;
@@ -214,7 +217,6 @@ export function buildCity(G) {
     g.font = '18px sans-serif'; g.fillText(sub, 128, 84);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
-    const spots = [[-78, -130, 0], [78, 26, 1], [-26, 130, 2], [130, -78, 3], [26, -182, 4], [-182, 78, 5]];
     const [x, z, rot] = spots[i];
     const pole = new THREE.Mesh(poleGeo, lampMat);
     pole.position.set(x, 3.5, z); scene.add(pole);

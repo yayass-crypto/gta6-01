@@ -16,7 +16,7 @@ Danny Reyes owes fixer **Marisol Vega** a debt. Three jobs stand between him and
 
 ## What is in the game
 
-- **Procedural city** — an 8×8-block grid with roads, sidewalks, parks, a beach strip, a port district and a downtown of towers. Buildings use canvas-generated procedural textures; billboards carry original fake ads (Solmar Cola, Taco Rey, Palm Motel…).
+- **Procedural city** — an 8×8-block grid with roads, sidewalks, parks, a beach strip, a port district and a downtown of towers. Buildings use canvas-generated procedural textures; billboards carry original fake ads (Solmar Cola, Taco Rey, Palm Motel, Pier Pizza…).
 - **On foot** — third-person low-poly Danny, WASD + mouse-drag orbit camera, Shift to run, Space to punch, F / click to shoot the pistol (hitscan tracers, muzzle flash), R to reload.
 - **Driving** — arcade car physics with acceleration, braking, steering, handbrake drift and chase camera. Press E to enter or exit any car — including stealing parked traffic cars (the driver flees, the law notices).
 - **Traffic & pedestrians** — 14 AI cars following road lanes and stopping at traffic lights, 24 pedestrians on the sidewalks who flee gunfire and crashes.

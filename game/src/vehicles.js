@@ -11,7 +11,19 @@ export function makeCarMesh(color, isPolice = false, variant = 'sedan') {
   const bodyLen = variant === 'van' ? 5.2 : 4.4;
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.62, bodyLen), bodyMat);
   body.position.y = 0.55; g.add(body);
-  if (variant === 'van') {
+  if (variant === 'pickup') {
+    // open-bed pickup truck: cab up front, low bed walls at the back
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.6, 1.6), glassMat);
+    cab.position.set(0, 1.1, 1.1); g.add(cab);
+    const bedWall = new THREE.MeshLambertMaterial({ color });
+    for (const [x, z, w, d] of [[-0.95, -1.2, 0.12, 2.6], [0.95, -1.2, 0.12, 2.6], [0, -2.45, 2.0, 0.12]]) {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(w, 0.55, d), bedWall);
+      wall.position.set(x, 1.1, z); g.add(wall);
+    }
+    const load = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.4, 1.8),
+      new THREE.MeshLambertMaterial({ color: 0x8a6d3b }));
+    load.position.set(0, 1.0, -1.3); g.add(load);
+  } else if (variant === 'van') {
     // boxy delivery van: tall cargo box instead of a low cabin
     const cargo = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.5, 3.4), bodyMat);
     cargo.position.set(0, 1.55, -0.7); g.add(cargo);
@@ -62,7 +74,7 @@ export function spawnTraffic(G) {
   G.traffic = [];
   for (let i = 0; i < 14; i++) {
     const roll = rng();
-    const variant = roll < 0.2 ? 'taxi' : roll < 0.35 ? 'van' : 'sedan';
+    const variant = roll < 0.2 ? 'taxi' : roll < 0.32 ? 'van' : roll < 0.44 ? 'pickup' : 'sedan';
     const color = variant === 'taxi' ? 0xf1c40f : CAR_COLORS[Math.floor(rng() * CAR_COLORS.length)];
     const { group } = makeCarMesh(color, false, variant);
     G.scene.add(group);
@@ -169,7 +181,6 @@ export function updatePlayerCar(G, dt) {
   const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
   car.pos.x += fx * car.speed * dt;
   car.pos.z += fz * car.speed * dt;
-  const before = car.pos.clone();
   if (collideCircle(G, car.pos, 1.6)) {
     // scrape: lose some speed on building hit
     car.speed *= 0.55;
@@ -193,6 +204,7 @@ export function updatePlayerCar(G, dt) {
   for (const w of car.wheels) w.rotation.x += car.speed * dt * 2;
   if (car.smoke) car.smoke.material.opacity = 0.3 + Math.random() * 0.3;
   G.playerSpeed = Math.abs(car.speed) * 3.6; // km/h display
+  G.playerPos.copy(car.pos); // keep world position in sync while driving (missions/HUD read it)
 }
 
 export function spawnPolice(G, n) {
