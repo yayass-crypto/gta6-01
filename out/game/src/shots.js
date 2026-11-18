@@ -1,75 +1,49 @@
-// Screenshot scenes behind ?shot=start|drive|chase|mission. Each one sets up
-// the real game state, then plays the real rules forward for a fixed number of
-// steps with a simple autopilot, so the frame is what a short session really
-// looks like — and the same seed always gives the same frame.
-import { makeCar, spawnPolice } from './vehicles.js';
-import { startMission } from './missions.js';
+// ?shot= staging for Solmar Heat: each shot plays the real game forward to a
+// representative frame, then the harness sets window.__shotReady = true.
+import { mulberry32, rand } from './common.js';
 
-const STEP = 1 / 60;
+export function stageShot(W, shot, seed = 1) {
+  const rng = mulberry32(seed * 7919 + 13);
+  const P = W.player;
+  const S = W.city.spots;
+  W.mode = 'play';
+  W.hud.hide('title'); W.hud.hide('pause'); W.hud.hide('end'); W.hud.hide('brief');
+  W.hud.show('hud');
 
-function steps(G, stepFn, seconds, inputFn) {
-  const n = Math.floor(seconds / STEP);
-  for (let i = 0; i < n; i += 1) stepFn(G, STEP, inputFn ? inputFn(i) : {});
-}
-
-// Put the player in a car on a straight road, heading north.
-function putPlayerInCar(G, x, z) {
-  const car = makeCar(G, 'sedan', x, z, 0);
-  car.kind = 'player';
-  G.cars.push(car);
-  G.playerCar = car;
-  G.player.onFoot = false;
-  G.player.x = x;
-  G.player.z = z;
-  return car;
-}
-
-export function stageShot(G, name, stepFn) {
-  const noInput = () => ({});
-  if (name === 'drive') {
-    G.screen = 'play';
-    const car = putPlayerInCar(G, 0, 150);
-    car.heading = Math.PI; // north, down the central road through downtown
-    car.speed = 24;
-    G.camMode = 'chase';
-    steps(G, stepFn, 6, () => ({ forward: true }));
+  if (shot === 'start') {
+    W.mode = 'title';
+    W.hud.hide('hud'); W.hud.show('title');
+    W.camOrbit = { x: 60, z: -90, t: 0 };
     return;
   }
-  if (name === 'chase') {
-    G.screen = 'play';
-    const car = putPlayerInCar(G, 0, 0);
-    car.heading = Math.PI; // north up the central road, police on the tail
-    car.speed = 26;
-    G.camMode = 'chase';
-    G.wanted.heat = 45; // 2 stars
-    spawnPolice(G, 2);
-    // A short burst, straight ahead: a long chase lets the rams and the
-    // weaving shove the car into a wall and pin it, which reads as a crash,
-    // not a chase.
-    steps(G, stepFn, 3, () => ({ forward: true }));
+  if (shot === 'drive') {
+    P.enterCar('sports', 0xc23b2e, 0, 18, 0);
+    P._car.speed = 22;
+    W.clockMins = 15 * 60 + 30;
     return;
   }
-  if (name === 'mission') {
-    G.screen = 'play';
-    startMission(G, 0);
-    const s = G.city.spots;
-    G.player.x = s.sedan.x - 6;
-    G.player.z = s.sedan.z + 10;
-    G.player.heading = Math.atan2(s.sedan.x - G.player.x, s.sedan.z - G.player.z);
-    G.camYaw = G.player.heading;
-    G.camPitch = 0.32;
-    G.camMode = 'follow';
-    steps(G, stepFn, 3, noInput);
+  if (shot === 'chase') {
+    P.enterCar('sports', 0xd8d8d8, 0, 0, 0);
+    P._car.speed = 26;
+    W.setWanted(3);
+    W.police.ensure(3, 0, 0, rng);
+    W.police.cars.forEach((c, i) => {
+      c.x = [2, -2, 6][i]; c.z = [-30, -46, -62][i];
+      c.heading = 0; c.speed = 24;
+    });
+    W.police.placeRoadblock(0, 34, 0);
+    W.clockMins = 17 * 60 + 45;
     return;
   }
-  // Default: the title screen over a living city at dusk.
-  G.screen = 'title';
-  G.clockH = 18.5;
-  G.camMode = 'cinematic';
-  const titleEl = document.getElementById('titleScreen');
-  if (titleEl) {
-    titleEl.style.display = 'flex';
-    titleEl.style.background = 'linear-gradient(rgba(5,8,14,0.15), rgba(5,8,14,0.78))';
+  if (shot === 'mission') {
+    W.city.setNight(true);
+    P.enterCar('sedan', 0x2e6fc2, -36, -52, 0);
+    const def = W.missions.defs[2];
+    W.missions.start(def);
+    W.clockMins = 22 * 60 + 10;
+    W.hud.announce('THE BIG SCORE', 'Reach the bank — hold the vault for 3 seconds.');
+    return;
   }
-  steps(G, stepFn, 5, noInput);
+  // default: free roam on foot downtown
+  P.showOnFoot(0, 0, 0);
 }

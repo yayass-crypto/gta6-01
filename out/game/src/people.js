@@ -1,240 +1,211 @@
-// People: Danny on foot, sidewalk pedestrians and the cops who chase him.
-// Pedestrians walk the sidewalks and flee gunfire and crashes; cops spawn with
-// the wanted level, run the player down and brawl him into a bust.
+// People of Solmar: the on-foot player, sidewalk pedestrians, foot police.
 import * as THREE from 'three';
-import { pick, range } from './rng.js';
-import { collideCircle, roadPoint } from './city.js';
-import { damagePlayer } from './vehicles.js';
+import { mulberry32, rand, choice, clamp, lerp } from './common.js';
+import { roadLines, HALF } from './city.js';
 
-const SKINS = ['#c98a5a', '#8a5a3a', '#e8b88a', '#6b4a2f', '#d8a06a'];
-const SHIRTS = ['#c0392b', '#2e6db3', '#3f8a4f', '#d8a02c', '#7a4a8a', '#e8e8e8', '#22262c'];
+const SKIN = [0xd8a078, 0xb07a52, 0x8a5a34, 0xe8b88a];
+const SHIRT = [0xc23b2e, 0x2e6fc2, 0x3aa84f, 0xd8d8d8, 0xc2a12e, 0x7a4fc2, 0xe07a2e, 0x222831];
 
-export function buildPersonMesh(rng, shirtColor) {
+export function makePersonMesh(shirtColor, skinColor, opts = {}) {
   const g = new THREE.Group();
-  const skin = new THREE.MeshStandardMaterial({ color: pick(rng, SKINS), roughness: 0.8 });
-  const shirt = new THREE.MeshStandardMaterial({ color: shirtColor || pick(rng, SHIRTS), roughness: 0.85 });
-  const pants = new THREE.MeshStandardMaterial({ color: '#2b3240', roughness: 0.9 });
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.72, 0.34), shirt);
-  torso.position.y = 1.15;
-  torso.castShadow = true;
-  g.add(torso);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 10), skin);
-  head.position.y = 1.72;
-  head.castShadow = true;
-  g.add(head);
-  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.75, 0.26), pants);
-  legL.position.set(-0.16, 0.38, 0);
-  g.add(legL);
-  const legR = legL.clone();
-  legR.position.x = 0.16;
-  g.add(legR);
-  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.62, 0.2), shirt);
-  armL.position.set(-0.42, 1.15, 0);
-  g.add(armL);
-  const armR = armL.clone();
-  armR.position.x = 0.42;
-  g.add(armR);
-  g.userData = { legL, legR, armL, armR };
+  const shirt = new THREE.MeshLambertMaterial({ color: shirtColor });
+  const skin = new THREE.MeshLambertMaterial({ color: skinColor });
+  const pants = new THREE.MeshLambertMaterial({ color: opts.pants ?? 0x2a3140 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.85, 0.34), shirt);
+  body.position.y = 1.05; g.add(body);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), skin);
+  head.position.y = 1.72; g.add(head);
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.65, 0.26), pants);
+  legL.position.set(-0.16, 0.33, 0); g.add(legL);
+  const legR = legL.clone(); legR.position.x = 0.16; g.add(legR);
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.6, 0.2), shirt);
+  armL.position.set(-0.42, 1.15, 0); g.add(armL);
+  const armR = armL.clone(); armR.position.x = 0.42; g.add(armR);
+  if (opts.cap) {
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.14, 0.46), new THREE.MeshLambertMaterial({ color: 0x1a2a4a }));
+    cap.position.y = 1.96; g.add(cap);
+  }
+  if (opts.jacket) {
+    const j = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.9, 0.4), new THREE.MeshLambertMaterial({ color: 0x8a1a1a }));
+    j.position.y = 1.05; g.add(j);
+  }
+  g.userData = { legL, legR, armL, armR, body };
   return g;
 }
 
-function walkAnim(mesh, phase, speed01) {
-  const s = Math.sin(phase) * 0.55 * speed01;
-  mesh.userData.legL.rotation.x = s;
-  mesh.userData.legR.rotation.x = -s;
-  mesh.userData.armL.rotation.x = -s * 0.8;
-  mesh.userData.armR.rotation.x = s * 0.8;
-}
-
-export function createPlayerMesh(rng) {
-  const mesh = buildPersonMesh(rng, '#ffb02e'); // Danny's yellow jacket
-  return mesh;
-}
-
-export function spawnPeds(G, count) {
-  for (let i = 0; i < count; i += 1) {
-    const pt = roadPoint(G.city, G.rng);
-    const mesh = buildPersonMesh(G.rng);
-    mesh.position.set(pt.x + range(G.rng, -4, 4), 0, pt.z + range(G.rng, -4, 4));
-    G.scene.add(mesh);
-    G.peds.push({
-      mesh, x: mesh.position.x, z: mesh.position.z,
-      heading: G.rng() * Math.PI * 2,
-      speed: range(G.rng, 1.0, 1.8),
-      state: 'walk', health: 50, fleeX: 0, fleeZ: 0, phase: G.rng() * 6,
-      tx: pt.x, tz: pt.z,
-    });
+export class OnFoot {
+  constructor(scene) {
+    this.scene = scene;
+    this.mesh = makePersonMesh(0xd8a020, 0xd8a078, { jacket: true });
+    this.mesh.visible = false;
+    scene.add(this.mesh);
+    this.x = 0; this.z = 0; this.heading = 0; this.speed = 0;
+    this.hp = 100; this.armour = 0; this.ammo = 24; this.reserveAmmo = 48;
+    this.weapon = 'pistol'; this.punchCd = 0; this.walkPhase = 0;
+    this.visible = false;
   }
-}
-
-export function updatePeds(G, dt) {
-  for (const ped of [...G.peds]) {
-    if (ped.state === 'dead') continue;
-    let tx = ped.tx;
-    let tz = ped.tz;
-    let speed = ped.speed;
-    if (ped.state === 'flee') {
-      tx = ped.fleeX;
-      tz = ped.fleeZ;
-      speed = 4.2;
-      if (Math.hypot(tx - ped.x, tz - ped.z) < 2) ped.state = 'walk';
-    }
-    const dx = tx - ped.x;
-    const dz = tz - ped.z;
-    const dist = Math.hypot(dx, dz);
-    if (dist < 1.5) {
-      const pt = roadPoint(G.city, G.rng);
-      ped.tx = pt.x;
-      ped.tz = pt.z;
-      continue;
-    }
-    const want = Math.atan2(dx, dz);
-    let diff = want - ped.heading;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    ped.heading += Math.max(-3 * dt, Math.min(3 * dt, diff));
-    ped.x += Math.sin(ped.heading) * speed * dt;
-    ped.z += Math.cos(ped.heading) * speed * dt;
-    const hit = collideCircle(G.city, ped.x, ped.z, 0.5);
-    ped.x = hit.x;
-    ped.z = hit.z;
-    ped.phase += dt * speed * 4;
-    walkAnim(ped.mesh, ped.phase, Math.min(1, speed / 2));
-    ped.mesh.position.set(ped.x, 0, ped.z);
-    ped.mesh.rotation.y = ped.heading;
-    // Hit by the player's car: knocked down, driver wanted.
-    const car = G.playerCar;
-    if (car && Math.hypot(car.x - ped.x, car.z - ped.z) < 2.6 && Math.abs(car.speed) > 3) {
-      killPed(G, ped, true);
-    }
+  show(x, z, heading) {
+    this.x = x; this.z = z; this.heading = heading;
+    this.mesh.visible = true; this.visible = true;
+    this.mesh.position.set(x, 0, z); this.mesh.rotation.y = heading;
   }
-}
-
-export function fleeFrom(G, x, z, radius) {
-  for (const ped of G.peds) {
-    if (ped.state === 'dead') continue;
-    const dx = ped.x - x;
-    const dz = ped.z - z;
-    const d = Math.hypot(dx, dz);
-    if (d < radius && d > 0.01) {
-      ped.state = 'flee';
-      ped.fleeX = ped.x + (dx / d) * 30;
-      ped.fleeZ = ped.z + (dz / d) * 30;
-    }
+  hide() { this.mesh.visible = false; this.visible = false; }
+  damage(amount) {
+    let left = amount;
+    if (this.armour > 0) { const absorbed = Math.min(this.armour, left * 0.6); this.armour -= absorbed; left -= absorbed; }
+    this.hp = Math.max(0, this.hp - left);
   }
-}
-
-export function killPed(G, ped, byCar) {
-  ped.state = 'dead';
-  ped.mesh.rotation.x = -Math.PI / 2;
-  ped.mesh.position.y = 0.3;
-  G.wanted.heat = Math.min(100, G.wanted.heat + (byCar ? 25 : 30));
-  fleeFrom(G, ped.x, ped.z, 25);
-  setTimeout(() => {
-    G.scene.remove(ped.mesh);
-    const i = G.peds.indexOf(ped);
-    if (i >= 0) G.peds.splice(i, 1);
-  }, 9000);
-}
-
-export function updatePlayerOnFoot(G, dt, input) {
-  const p = G.player;
-  const run = input.run ? 2 : 1;
-  const speed = 5.2 * run;
-  let mx = 0;
-  let mz = 0;
-  if (input.forward) mz += 1;
-  if (input.back) mz -= 1;
-  if (input.left) mx -= 1;
-  if (input.right) mx += 1;
-  if (mx !== 0 || mz !== 0) {
+  update(dt, input, camYaw, city) {
+    if (!this.visible) return;
+    this.punchCd = Math.max(0, this.punchCd - dt);
+    // WASD relative to camera yaw
+    let mx = 0, mz = 0;
+    if (input.forward) { mx += Math.sin(camYaw); mz += Math.cos(camYaw); }
+    if (input.back) { mx -= Math.sin(camYaw); mz -= Math.cos(camYaw); }
+    if (input.left) { mx += Math.sin(camYaw - Math.PI / 2); mz += Math.cos(camYaw - Math.PI / 2); }
+    if (input.right) { mx += Math.sin(camYaw + Math.PI / 2); mz += Math.cos(camYaw + Math.PI / 2); }
     const len = Math.hypot(mx, mz);
-    mx /= len;
-    mz /= len;
-    // Movement is relative to the camera yaw.
-    const cy = G.camYaw;
-    const wx = mx * Math.cos(cy) - mz * Math.sin(cy);
-    const wz = mx * Math.sin(cy) + mz * Math.cos(cy);
-    const nx = p.x + wx * speed * dt;
-    const nz = p.z + wz * speed * dt;
-    const hit = collideCircle(G.city, nx, nz, 0.55);
-    p.x = hit.x;
-    p.z = hit.z;
-    p.heading = Math.atan2(wx, wz);
-    p.phase += dt * speed * 1.6;
-    walkAnim(p.mesh, p.phase, run);
-    p.moving = true;
-  } else {
-    p.moving = false;
-    walkAnim(p.mesh, p.phase, 0);
-  }
-  p.mesh.position.set(p.x, 0, p.z);
-  p.mesh.rotation.y = p.heading;
-  // Slow health regen out of combat.
-  if (G.time - p.lastHurt > 8 && p.health > 0 && p.health < 100) {
-    p.health = Math.min(100, p.health + 2 * dt);
-  }
-}
-
-export function spawnCops(G, count) {
-  for (let i = 0; i < count; i += 1) {
-    const angle = G.rng() * Math.PI * 2;
-    const x = G.player.x + Math.sin(angle) * range(G.rng, 25, 40);
-    const z = G.player.z + Math.cos(angle) * range(G.rng, 25, 40);
-    const mesh = buildPersonMesh(G.rng, '#1c2f4a'); // dark blue uniform
-    mesh.position.set(x, 0, z);
-    G.scene.add(mesh);
-    G.cops.push({
-      mesh, x, z, heading: 0, speed: 5.6,
-      punchAt: 0, phase: G.rng() * 6,
-    });
-  }
-}
-
-export function updateCops(G, dt) {
-  const p = G.player;
-  for (const cop of [...G.cops]) {
-    const dx = p.x - cop.x;
-    const dz = p.z - cop.z;
-    const dist = Math.hypot(dx, dz);
-    const want = Math.atan2(dx, dz);
-    let diff = want - cop.heading;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    cop.heading += Math.max(-4 * dt, Math.min(4 * dt, diff));
-    if (dist > 2.2) {
-      cop.x += Math.sin(cop.heading) * cop.speed * dt;
-      cop.z += Math.cos(cop.heading) * cop.speed * dt;
-      const hit = collideCircle(G.city, cop.x, cop.z, 0.5);
-      cop.x = hit.x;
-      cop.z = hit.z;
-      cop.phase += dt * 9;
-      walkAnim(cop.mesh, cop.phase, 1);
+    const run = input.run ? 8.5 : 4.6;
+    if (len > 0.01) {
+      mx /= len; mz /= len;
+      this.heading = Math.atan2(mx, mz);
+      const nx = this.x + mx * run * dt, nz = this.z + mz * run * dt;
+      if (!city.collideCircle(nx, this.z, 0.55)) this.x = nx;
+      if (!city.collideCircle(this.x, nz, 0.55)) this.z = nz;
+      this.x = clamp(this.x, -HALF - 20, HALF + 20);
+      this.z = clamp(this.z, -HALF - 20, HALF + 58);
+      this.speed = run;
+      this.walkPhase += dt * run * 1.6;
     } else {
-      // Brawl: a punch every 0.9 s.
-      cop.punchAt -= dt;
-      if (cop.punchAt <= 0) {
-        cop.punchAt = 0.9;
-        damagePlayer(G, 7);
-        p.lastHurt = G.time;
-        G.audio.punch();
-      }
-      walkAnim(cop.mesh, cop.phase, 0);
+      this.speed = lerp(this.speed, 0, Math.min(1, dt * 8));
+      this.walkPhase += dt * 1.2;
     }
-    cop.mesh.position.set(cop.x, 0, cop.z);
-    cop.mesh.rotation.y = cop.heading;
+    const s = Math.sin(this.walkPhase);
+    const u = this.mesh.userData;
+    const amp = clamp(this.speed / 8.5, 0.08, 1) * 0.7;
+    u.legL.rotation.x = s * amp; u.legR.rotation.x = -s * amp;
+    u.armL.rotation.x = -s * amp * 0.8; u.armR.rotation.x = s * amp * 0.8;
+    this.mesh.position.set(this.x, 0, this.z);
+    this.mesh.rotation.y = this.heading;
   }
-  // Busted: low health and a cop right on top of him.
-  if (p.health <= 25 && G.cops.some((c) => Math.hypot(c.x - p.x, c.z - p.z) < 2.5)) {
-    G.endGame('busted');
+}
+
+// ---------- pedestrians ----------
+export class Peds {
+  constructor(scene, seed = 21) {
+    this.scene = scene; this.rng = mulberry32(seed); this.list = [];
   }
-  // Cull cops when the heat is gone.
-  if (G.wanted.stars === 0 && G.cops.length > 0) {
-    for (const cop of [...G.cops]) {
-      if (Math.hypot(cop.x - p.x, cop.z - p.z) > 60) {
-        G.scene.remove(cop.mesh);
-        G.cops.splice(G.cops.indexOf(cop), 1);
-      }
+  spawnAll(n = 30) {
+    for (let i = 0; i < n; i++) this.list.push(this._make(true));
+  }
+  _make(anywhere) {
+    const rng = this.rng;
+    const mesh = makePersonMesh(choice(rng, SHIRT), choice(rng, SKIN));
+    this.scene.add(mesh);
+    const axis = rng() < 0.5 ? 'x' : 'z';
+    const line = choice(rng, roadLines);
+    const pos = anywhere ? rand(rng, -HALF, HALF) : rand(rng, -HALF, HALF);
+    const dir = rng() < 0.5 ? 1 : -1;
+    return { mesh, axis, line, pos, dir, speed: rand(rng, 1.2, 2.2), flee: 0, fx: 0, fz: 0, phase: rand(rng, 0, 6) };
+  }
+  scare(x, z, radius = 26) {
+    for (const p of this.list) {
+      const pp = this.pos(p);
+      if (Math.hypot(pp.x - x, pp.z - z) < radius) { p.flee = 3 + Math.random() * 2; p.fx = x; p.fz = z; }
     }
   }
+  pos(p) {
+    return p.axis === 'x' ? { x: p.pos, z: p.line + (p.dir > 0 ? 6 : -6) } : { x: p.line + (p.dir > 0 ? 6 : -6), z: p.pos };
+  }
+  update(dt, city) {
+    for (const p of this.list) {
+      let sp = p.speed;
+      if (p.flee > 0) {
+        p.flee -= dt; sp = 6.5;
+        const pp = this.pos(p);
+        const dx = pp.x - p.fx, dz = pp.z - p.fz;
+        const d = Math.hypot(dx, dz) || 1;
+        const nx = pp.x + (dx / d) * sp * dt, nz = pp.z + (dz / d) * sp * dt;
+        if (!city.collideCircle(nx, pp.z, 0.5)) { /* flee along free axis */ }
+        // flee by moving the underlying pos along its axis away from the scare point
+        if (p.axis === 'x') p.pos += (dx >= 0 ? 1 : -1) * sp * dt;
+        else p.pos += (dz >= 0 ? 1 : -1) * sp * dt;
+      } else {
+        p.pos += p.dir * sp * dt;
+        if (p.pos > HALF + 4) { p.pos = HALF + 4; p.dir = -1; }
+        if (p.pos < -HALF - 4) { p.pos = -HALF - 4; p.dir = 1; }
+      }
+      const pp = this.pos(p);
+      p.phase += dt * sp * 3.2;
+      const s = Math.sin(p.phase);
+      const u = p.mesh.userData;
+      u.legL.rotation.x = s * 0.5; u.legR.rotation.x = -s * 0.5;
+      u.armL.rotation.x = -s * 0.4; u.armR.rotation.x = s * 0.4;
+      p.mesh.position.set(pp.x, 0, pp.z);
+      const heading = p.flee > 0
+        ? Math.atan2(pp.x - p.fx, pp.z - p.fz)
+        : p.axis === 'x' ? (p.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (p.dir > 0 ? 0 : Math.PI);
+      p.mesh.rotation.y = heading;
+    }
+  }
+  nearest(x, z, maxD) {
+    let best = null, bd = maxD;
+    for (const p of this.list) {
+      const pp = this.pos(p);
+      const d = Math.hypot(pp.x - x, pp.z - z);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  }
+  remove(p) {
+    const i = this.list.indexOf(p);
+    if (i >= 0) { this.scene.remove(p.mesh); this.list.splice(i, 1); this.list.push(this._make(true)); }
+  }
+}
+
+// ---------- foot police ----------
+export class FootCops {
+  constructor(scene) {
+    this.scene = scene; this.list = [];
+  }
+  ensure(count, px, pz, rng) {
+    while (this.list.length < count) {
+      const a = rng() * Math.PI * 2;
+      const mesh = makePersonMesh(0x1a2a4a, choice(rng, SKIN), { cap: true, pants: 0x1a2a4a });
+      const x = px + Math.sin(a) * 40, z = pz + Math.cos(a) * 40;
+      mesh.position.set(x, 0, z);
+      this.scene.add(mesh);
+      this.list.push({ mesh, x, z, heading: 0, closeT: 0, phase: rng() * 6 });
+    }
+    while (this.list.length > count) {
+      const c = this.list.pop();
+      this.scene.remove(c.mesh);
+    }
+  }
+  clear() {
+    for (const c of this.list) this.scene.remove(c.mesh);
+    this.list = [];
+  }
+  update(dt, player, city) {
+    for (const c of this.list) {
+      const dx = player.x - c.x, dz = player.z - c.z;
+      const d = Math.hypot(dx, dz) || 1;
+      c.heading = Math.atan2(dx, dz);
+      const sp = d > 3 ? 6.2 : 2.2;
+      const nx = c.x + (dx / d) * sp * dt, nz = c.z + (dz / d) * sp * dt;
+      if (!city.collideCircle(nx, c.z, 0.5)) c.x = nx;
+      if (!city.collideCircle(c.x, nz, 0.5)) c.z = nz;
+      c.phase += dt * sp * 2.4;
+      const s = Math.sin(c.phase);
+      const u = c.mesh.userData;
+      u.legL.rotation.x = s * 0.55; u.legR.rotation.x = -s * 0.55;
+      c.mesh.position.set(c.x, 0, c.z);
+      c.mesh.rotation.y = c.heading;
+      if (d < 2.2) {
+        c.closeT += dt;
+        player.damage(6 * dt);
+      } else c.closeT = Math.max(0, c.closeT - dt);
+    }
+  }
+  maxCloseT() { return this.list.reduce((m, c) => Math.max(m, c.closeT), 0); }
 }

@@ -1,58 +1,51 @@
 # Solmar Heat — an open-world crime game
 
-[![make.fun](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
+[![gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
 [![rank](https://make.fun/badge/gta6-01/yayass-crypto/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01)
 [![reward](https://make.fun/badge/gta6-01/yayass-crypto/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01)
 
-An original open-world crime game for the make.fun bounty
-[Make GTA 6](https://make.fun/bounty/gta6-01): one procedural city, a
-third-person outlaw, drivable cars, traffic, pedestrians, a wanted system
-with police chases, three story missions, combat, a HUD with a minimap, a
-start screen and a save — all running offline in a desktop browser from
-static files, with no network requests and no Rockstar material anywhere.
+**Competition:** [gta6-01 — Make GTA 6](https://make.fun/bounty/gta6-01) · $1,666 prize pool, top 100 paid.
 
-## The story
+Danny Reyes owes fixer **Marisol Vega** a debt he cannot pay. One city, six jobs, and every cop in Solmar between him and freedom. Steal cars, outrun the law, take the turf — and make the big score.
 
-Danny Reyes owes fixer Marisol Vega a debt he cannot pay. Three jobs stand
-between him and a clean slate:
+## The city
 
-1. **First Wheels** — steal the marked sedan by the marina and deliver it to the chop shop before the clock runs out.
-2. **Hot Delivery** — run a package across town while the cops are already on you at 2 stars.
-3. **The Big Score** — a night job at the downtown bank: grab the cash, survive the armed crew, and lose a 3-star chase at the hideout.
+**Solmar** is a fully procedural 3D open world (three.js, zero network requests at runtime): an 8×8 block grid with a downtown of neon towers, a beach strip and sea, a working port full of shipping containers, parks, a construction site with a crane, billboards with original fake ads, streetlights, and traffic lights that actually stop traffic.
 
-Finish all three and the story is complete. Free roam stays open after that.
+## What you can do
 
-## What is in the city
-
-- **Solmar**, a procedural 8×8-block city: downtown towers, a beach strip with palms, a port full of containers, parks, billboards with original fake ads, and street lamps that light the night job.
-- **On foot**: third-person movement, mouse-drag camera, run, punch, and a pistol with hitscan tracers and a muzzle flash.
-- **Driving**: arcade car physics with handbrake drift, car damage and smoke, and the ability to enter, exit and steal any traffic car.
-- **Traffic and pedestrians**: ~14 cars driving the road grid and obeying traffic lights, ~24 walkers on the sidewalks who flee gunfire and crashes.
-- **Wanted and police**: 0–5 stars. Stealing, assault and killing raise the heat; police cars chase and ram, cops on foot brawl you into a bust. Lay low at the hideout for $200 to clear the heat.
-- **Combat and pickups**: fists, a pistol with reloads, gang shooters in the final job, and health, armour and ammo pickups around the city.
-- **HUD and minimap**: cash, health, armour, ammo, wanted stars, the game clock, the current objective, speed while driving, and a live minimap with roads, traffic, police and the mission blip.
-- **Start and save**: title screen with New Game / Continue, pause, busted and wasted screens, and a localStorage save that keeps cash and jobs done.
-- **Sound**: everything is synthesised with WebAudio — engine hum, sirens, gunshots, punches, pickup chimes, mission jingles and an ambient city loop. M mutes.
+- **On foot** — third-person Danny: WASD to move, Shift to sprint, mouse-drag to orbit the camera, Space to punch, click to shoot the pistol, R to reload.
+- **Driving** — press E to enter any car, F to steal one (the owner runs, the cops notice). Arcade handling with handbrake drift (Space), car damage smoke, and headlights after dark.
+- **Traffic & crowds** — 18 AI cars obey traffic lights and turn at intersections, 30 pedestrians stroll the sidewalks and flee gunfire.
+- **Wanted system** — 0–5 stars. Steal, fight, and kill and the heat rises: police cruisers chase and ram, foot cops hunt you down, roadblocks appear at 3+ stars. Lay low at Vega's garage ($100) or stay hidden and the stars decay.
+- **Combat** — fists and a pistol with ammo, plus health, armour, ammo and cash pickups scattered around town.
+- **Six story missions** — steal a sedan for the chop shop, a hot delivery under a 2-star chase, a night bank job with a 3-star escape, a five-checkpoint street race, a turf war against eight Red Jackets, and a taxi fare run. Each has a briefing card, a waypoint beacon and arrow, timers, cash rewards, and an unlock chain. Finish all six for the Story Complete bonus.
+- **HUD & minimap** — cash, health, armour, ammo, wanted stars, in-game clock, objective tracker with distance and timer, speedometer, a live circular minimap, damage vignette, and floating cash popups.
+- **Sound** — fully synthesized WebAudio: engine hum that follows your speed, two-tone sirens, gunshots, punch thuds, pickup chimes, mission jingles. N mutes.
+- **Save** — progress autosaves to localStorage (cash, jobs done, health, ammo); Continue picks up where you left off.
 
 ## Controls
 
-WASD move · mouse drag to look · wheel zoom · Shift run · E enter / exit car · F steal car · click shoot · Space punch · R reload · 1 / 2 / 3 start the next job · Esc pause · M mute
+| Key | Action |
+| --- | --- |
+| WASD / arrows | Move / drive |
+| Mouse drag | Orbit camera |
+| Click | Shoot pistol |
+| Space | Punch (on foot) / handbrake (driving) |
+| E | Enter / exit car |
+| F | Steal nearby car |
+| R | Reload |
+| Shift | Sprint |
+| M | Next job briefing |
+| N | Mute |
+| Esc | Pause |
 
-## Run it
+## Tech
 
-```sh
-node serve.ts
-# then open http://localhost:8080
-```
+Built with three.js (vendored locally under `game/vendor/`), plain ES modules, canvas-generated building textures and billboards — no external assets, no fonts, no network requests while playing. Runs offline from `game/index.html`.
 
-Or build the hand-in directly:
-
-```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-```
-
-`main.ts` (Node 22, standard library only) copies `game/` and `screenshots/` to the output directory and writes `dossier.json` with the kit's vendored `vendor/makefun-game.ts`. The game itself needs no server and no network: three.js is vendored under `game/vendor/`.
+Serve locally with `node serve.ts` and open http://localhost:8080.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see `LICENSE`. All names, characters, places, vehicles, story and art are original; nothing here is affiliated with or derived from any Rockstar game.
