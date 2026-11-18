@@ -1,180 +1,214 @@
-// missions.js — 3-mission story: Danny Reyes owes fixer Marisol Vega a debt.
+// The story: three jobs for fixer Marisol Vega, each a small state machine
+// (go to a place, do the thing, get to the next place) with a waypoint beacon,
+// a timer and a cash reward. Finishing all three ends the story.
 import * as THREE from 'three';
+import { makeCar } from './vehicles.js';
+import { buildPersonMesh } from './people.js';
 
-export const MISSIONS = [
+export const MISSION_DEFS = [
   {
-    id: 1, name: 'First Wheels', reward: 500,
-    brief: 'Marisol Vega: "You owe me, Danny. Steal the marked sedan by the pier and bring it to the chop shop. No cops, no excuses."',
-    start: { x: -52, z: 52 },
-    steps: [
-      { text: 'Steal the marked sedan (walk up and press E)', target: { x: -156, z: 104 }, kind: 'steal' },
-      { text: 'Deliver the sedan to the chop shop', target: { x: 156, z: -52 }, kind: 'deliver', timer: 90 },
-    ],
+    name: 'First Wheels',
+    brief: 'Marisol needs wheels. Steal the marked sedan by the marina and bring it to the chop shop. You have 90 seconds.',
+    timer: 90, reward: 500,
   },
   {
-    id: 2, name: 'Hot Delivery', reward: 900,
-    brief: 'Marisol: "A package is waiting at the port. Pick it up, drop it downtown — and stay cool. The cops are already sniffing around."',
-    start: { x: 156, z: -104 },
-    steps: [
-      { text: 'Pick up the package at the port', target: { x: 182, z: -52 }, kind: 'pickup' },
-      { text: 'Deliver the package downtown (2-star heat!)', target: { x: 0, z: 0 }, kind: 'deliver', timer: 120, wanted: 2 },
-    ],
+    name: 'Hot Delivery',
+    brief: 'Pick up the package on the east side, then run it across town. The cops will be watching — 2 stars the moment you grab it. 120 seconds.',
+    timer: 120, reward: 800,
   },
   {
-    id: 3, name: 'The Big Score', reward: 2500,
-    brief: 'Marisol: "Tonight we hit the Solmar National Bank. Grab the cash, lose the cops, get to the hideout. This clears your debt, Danny."',
-    start: { x: 0, z: -52 },
-    steps: [
-      { text: 'Reach the Solmar National Bank', target: { x: 26, z: 26 }, kind: 'goto', night: true },
-      { text: 'Grab the cash inside (press E at the door)', target: { x: 26, z: 26 }, kind: 'grab' },
-      { text: 'Escape the 3-star chase — reach the hideout', target: { x: -156, z: -156 }, kind: 'deliver', timer: 150, wanted: 3 },
-    ],
+    name: 'The Big Score',
+    brief: 'Night job. Hit the downtown bank, grab the cash, and lose a 3-star chase at the hideout. The crew is armed — so are you.',
+    timer: 0, reward: 2500,
   },
 ];
 
-export function initMissions(G) {
-  G.missionIndex = 0; // next mission to start (0-based)
-  G.mission = null;   // active mission state
-  G.missionDone = [false, false, false];
-  // start markers (yellow blips) for the next mission
-  const geo = new THREE.CylinderGeometry(2.2, 2.2, 0.4, 20);
-  const mat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.7 });
-  G.startMarker = new THREE.Mesh(geo, mat);
-  G.scene.add(G.startMarker);
-  // waypoint beacon
-  const bgeo = new THREE.CylinderGeometry(1.6, 1.6, 30, 12, 1, true);
-  const bmat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false });
-  G.beacon = new THREE.Mesh(bgeo, bmat);
-  G.beacon.visible = false;
-  G.scene.add(G.beacon);
-  updateStartMarker(G);
-}
+let beacon = null;
 
-export function updateStartMarker(G) {
-  if (G.mission || G.missionIndex >= MISSIONS.length) {
-    G.startMarker.visible = false;
-    return;
+function setBeacon(G, x, z, color) {
+  if (beacon) {
+    G.scene.remove(beacon);
+    beacon = null;
   }
-  const m = MISSIONS[G.missionIndex];
-  G.startMarker.visible = true;
-  G.startMarker.position.set(m.start.x, 0.25, m.start.z);
+  if (x === null) return;
+  const g = new THREE.Group();
+  const cyl = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.2, 2.2, 30, 16, 1, true),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  cyl.position.y = 15;
+  g.add(cyl);
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(2.2, 0.18, 8, 24),
+    new THREE.MeshBasicMaterial({ color }),
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.25;
+  g.add(ring);
+  g.position.set(x, 0, z);
+  G.scene.add(g);
+  beacon = g;
 }
 
-export function startMission(G, idx) {
-  const def = MISSIONS[idx];
-  G.mission = {
-    def, step: 0, timer: def.steps[0].timer || 0,
-    target: new THREE.Vector3(def.steps[0].target.x, 0, def.steps[0].target.z),
-    cashStolen: false,
+function setObjective(G, text) {
+  G.objective = text;
+  const el = document.getElementById('objective');
+  if (el) el.textContent = text;
+}
+
+export function startMission(G, index) {
+  const def = MISSION_DEFS[index];
+  const s = G.city.spots;
+  const m = {
+    index, def, stage: 'go', timer: def.timer,
+    target: null, car: null,
   };
-  G.beacon.visible = true;
-  G.beacon.position.set(def.steps[0].target.x, 15, def.steps[0].target.z);
-  G.showBrief(def.brief);
-  G.audio?.jingle();
-  updateStartMarker(G);
-  G.hud?.update();
-}
-
-export function currentObjective(G) {
-  if (!G.mission) {
-    if (G.missionIndex >= MISSIONS.length) return 'Story complete — free roam Solmar!';
-    return `Go to the yellow marker to start: ${MISSIONS[G.missionIndex].name}`;
+  G.mission = m;
+  G.banner(def.name, def.brief);
+  G.audio.jingle();
+  if (index === 0) {
+    // The marked sedan waits by the marina.
+    m.car = makeCar(G, 'sedan', s.sedan.x, s.sedan.z, Math.PI / 2);
+    m.car.kind = 'parked';
+    m.car.speed = 0;
+    G.cars.push(m.car);
+    m.target = { x: s.sedan.x, z: s.sedan.z, label: 'the marked sedan' };
+    setObjective(G, `Mission 1 — ${def.name}: steal the marked sedan (F near it).`);
+    setBeacon(G, s.sedan.x, s.sedan.z, 0xffd23e);
+  } else if (index === 1) {
+    m.target = { x: s.package.x, z: s.package.z, label: 'the package' };
+    setObjective(G, `Mission 2 — ${def.name}: pick up the package on the east side.`);
+    setBeacon(G, s.package.x, s.package.z, 0xffd23e);
+  } else {
+    G.setNight(true);
+    m.target = { x: s.bank.x, z: s.bank.z, label: 'the bank' };
+    setObjective(G, `Mission 3 — ${def.name}: reach the downtown bank at night.`);
+    setBeacon(G, s.bank.x, s.bank.z, 0xffd23e);
   }
-  const step = G.mission.def.steps[G.mission.step];
-  return step.text;
 }
 
-export function missionTarget(G) {
-  if (G.mission) return G.mission.target;
-  if (G.missionIndex < MISSIONS.length) {
-    const s = MISSIONS[G.missionIndex].start;
-    return new THREE.Vector3(s.x, 0, s.z);
-  }
-  return null;
-}
-
-function advanceStep(G) {
+function completeMission(G) {
   const m = G.mission;
-  m.step += 1;
-  if (m.step >= m.def.steps.length) {
-    completeMission(G);
+  const reward = m.def.reward;
+  G.player.cash += reward;
+  G.popup(`+$${reward}`);
+  G.audio.cash();
+  G.save();
+  setBeacon(G, null, null);
+  if (m.index >= 2) {
+    G.mission = null;
+    G.missionsDone = 3;
+    G.banner('STORY COMPLETE', 'All three jobs done. Marisol is paid, and Solmar is yours.');
+    G.audio.jingle();
+    setObjective(G, 'Story complete — free roam. Keep the city hot or lay low at the hideout.');
+    G.save();
     return;
   }
-  const step = m.def.steps[m.step];
-  m.target.set(step.target.x, 0, step.target.z);
-  m.timer = step.timer || 0;
-  G.beacon.position.set(step.target.x, 15, step.target.z);
-  if (step.wanted) G.setWanted(step.wanted, 'mission heat');
-  if (step.night) G.setNight(true);
-  if (step.kind === 'deliver' && m.def.id === 3) {
-    // gang guards at the bank for the escape
-    import('./combat.js').then((c) => c.spawnGang(G, 26, 26, 4));
-  }
-  G.hud?.update();
+  G.missionsDone = m.index + 1;
+  G.banner('JOB DONE', `${m.def.name} complete — $${reward}. Next job unlocked.`);
+  G.mission = null;
+  setObjective(G, `Job ${m.index + 1} done. Press M1 (or drive to the next marker) to start job ${m.index + 2} — or free roam.`);
+  G.save();
 }
 
-export function completeMission(G) {
+function failMission(G, why) {
   const m = G.mission;
-  G.addCash(m.def.reward);
-  G.hudPopup(`+$${m.def.reward} — ${m.def.name} complete!`, '#FFD700');
-  G.missionDone[m.def.id - 1] = true;
-  G.missionIndex = m.def.id; // next mission
+  G.banner('JOB FAILED', why);
+  G.audio.busted();
+  setBeacon(G, null, null);
   G.mission = null;
-  G.beacon.visible = false;
-  G.setWanted(0, 'mission complete');
-  G.setNight(false);
-  G.audio?.jingle();
-  G.saveGame();
-  if (G.missionIndex >= MISSIONS.length) {
-    G.addCash(1000);
-    G.state = 'complete';
-    G.showComplete();
-  }
-  updateStartMarker(G);
-  G.hud?.update();
-}
-
-export function failMission(G, reason) {
-  if (!G.mission) return;
-  G.showToast(`Mission failed: ${reason}`);
-  G.mission = null;
-  G.beacon.visible = false;
-  G.setNight(false);
-  updateStartMarker(G);
-  G.hud?.update();
+  setObjective(G, `Job ${m.index + 1} failed — ${why} Walk to the yellow marker to retry it.`);
+  // A retry marker appears at the mission start spot.
+  G.retryIndex = m.index;
+  const s = G.city.spots;
+  const spot = m.index === 0 ? s.sedan : m.index === 1 ? s.package : s.bank;
+  setBeacon(G, spot.x, spot.z, 0xffd23e);
 }
 
 export function updateMissions(G, dt) {
-  if (G.startMarker.visible) G.startMarker.rotation.y += dt;
-  if (G.beacon.visible) G.beacon.rotation.y += dt * 0.5;
-  if (!G.mission) {
-    // walk into the start marker to begin
-    if (G.missionIndex < MISSIONS.length) {
-      const s = MISSIONS[G.missionIndex].start;
-      const d = Math.hypot(G.playerPos.x - s.x, G.playerPos.z - s.z);
-      if (d < 3.5 && !G.player.inCar) startMission(G, G.missionIndex);
-    }
-    return;
-  }
   const m = G.mission;
-  const step = m.def.steps[m.step];
+  const p = G.player;
+  // Retry: walk into the beacon to restart the failed job.
+  if (!m && G.retryIndex !== null && G.retryIndex !== undefined) {
+    const s = G.city.spots;
+    const spot = G.retryIndex === 0 ? s.sedan : G.retryIndex === 1 ? s.package : s.bank;
+    if (Math.hypot(p.x - spot.x, p.z - spot.z) < 4) {
+      const idx = G.retryIndex;
+      G.retryIndex = null;
+      startMission(G, idx);
+      return;
+    }
+  }
+  if (!m) return;
   if (m.timer > 0) {
     m.timer -= dt;
-    if (m.timer <= 0) { failMission(G, 'Out of time'); return; }
-  }
-  const d = Math.hypot(G.playerPos.x - step.target.x, G.playerPos.z - step.target.z);
-  if (step.kind === 'steal') {
-    // target is the marked sedan; entering it advances
-    if (G.player.inCar && G.playerCar?.isMarked) advanceStep(G);
-  } else if (step.kind === 'pickup' || step.kind === 'goto') {
-    if (d < 5) advanceStep(G);
-  } else if (step.kind === 'deliver') {
-    if (d < 6 && G.player.inCar) advanceStep(G);
-    else if (d < 6 && !G.player.inCar) G.showToast('You need the car to deliver!');
-  } else if (step.kind === 'grab') {
-    if (d < 5 && G.keys['KeyE']) {
-      G.hudPopup('Cash grabbed!', '#FFD700');
-      advanceStep(G);
+    if (m.timer <= 0) {
+      failMission(G, 'Out of time.');
+      return;
     }
   }
+  const s = G.city.spots;
+  const near = (x, z, r) => Math.hypot(p.x - x, p.z - z) < r;
+  if (m.index === 0) {
+    if (m.stage === 'go') {
+      if (G.playerCar === m.car) {
+        m.stage = 'deliver';
+        m.target = { x: s.chopShop.x, z: s.chopShop.z, label: 'the chop shop' };
+        setObjective(G, `Mission 1 — ${m.def.name}: deliver the sedan to the chop shop.`);
+        setBeacon(G, s.chopShop.x, s.chopShop.z, 0xffd23e);
+      }
+    } else if (m.stage === 'deliver' && G.playerCar === m.car && near(s.chopShop.x, s.chopShop.z, 7)) {
+      completeMission(G);
+    }
+  } else if (m.index === 1) {
+    if (m.stage === 'go' && near(s.package.x, s.package.z, 4)) {
+      m.stage = 'deliver';
+      m.target = { x: s.chopShop.x, z: s.chopShop.z, label: 'the drop-off' };
+      G.wanted.heat = Math.max(G.wanted.heat, 45);
+      setObjective(G, `Mission 2 — ${m.def.name}: deliver the package to the drop-off. Cops are on you.`);
+      setBeacon(G, s.chopShop.x, s.chopShop.z, 0xffd23e);
+      G.audio.jingle();
+    } else if (m.stage === 'deliver' && near(s.chopShop.x, s.chopShop.z, 7)) {
+      completeMission(G);
+    }
+  } else if (m.index === 2) {
+    if (m.stage === 'go' && near(s.bank.x, s.bank.z, 6)) {
+      m.stage = 'grab';
+      m.grabAt = G.time + 3;
+      setObjective(G, `Mission 3 — ${m.def.name}: grabbing the cash… stay close to the bank.`);
+      // The crew opens fire.
+      for (let i = 0; i < 3; i += 1) {
+        const mesh = buildPersonMesh(G.rng, '#3a3a3a');
+        const x = s.bank.x + (i - 1) * 8;
+        const z = s.bank.z + 12;
+        mesh.position.set(x, 0, z);
+        G.scene.add(mesh);
+        G.gang.push({ mesh, x, z, heading: 0, health: 100, shootAt: 1 + i * 0.5 });
+      }
+    } else if (m.stage === 'grab') {
+      if (!near(s.bank.x, s.bank.z, 8)) {
+        m.stage = 'go';
+        setObjective(G, `Mission 3 — ${m.def.name}: get back to the bank to grab the cash.`);
+      } else if (G.time >= m.grabAt) {
+        m.stage = 'escape';
+        m.target = { x: s.hideout.x, z: s.hideout.z, label: 'the hideout' };
+        G.wanted.heat = Math.max(G.wanted.heat, 65);
+        setObjective(G, `Mission 3 — ${m.def.name}: cash grabbed! Lose the 3-star chase at the hideout.`);
+        setBeacon(G, s.hideout.x, s.hideout.z, 0x3ddc5f);
+        G.audio.jingle();
+      }
+    } else if (m.stage === 'escape' && near(s.hideout.x, s.hideout.z, 8)) {
+      G.wanted.heat = 0;
+      G.setNight(false);
+      completeMission(G);
+    }
+  }
+}
+
+export function missionTarget(G) {
+  return G.mission ? G.mission.target : null;
+}
+
+export function clearBeacon(G) {
+  setBeacon(G, null, null);
 }

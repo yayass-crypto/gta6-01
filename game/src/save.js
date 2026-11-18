@@ -1,36 +1,23 @@
-// save.js — localStorage save/load for Solmar Heat.
+// Save: one localStorage row for cash, jobs done and best stats. Storage can
+// be off (private windows) — then the game simply starts fresh each visit.
 const KEY = 'solmar-heat-save-v1';
 
-export function saveGame(G) {
+export function loadSave() {
   try {
-    const data = {
-      cash: Math.floor(G.cash),
-      missionsDone: G.missionDone,
-      missionIndex: G.missionIndex,
-      bestCash: Math.max(G.bestCash || 0, Math.floor(G.cash)),
-      kills: G.stats?.kills || 0,
-      carsStolen: G.stats?.carsStolen || 0,
-      savedAt: new Date().toISOString(),
-    };
-    localStorage.setItem(KEY, JSON.stringify(data));
-    return true;
-  } catch { return false; }
-}
-
-export function loadGame(G) {
-  try {
-    const raw = localStorage.getItem(KEY);
+    const raw = window.localStorage.getItem(KEY);
     if (!raw) return null;
-    const d = JSON.parse(raw);
-    G.cash = d.cash || 0;
-    G.missionDone = d.missionsDone || [false, false, false];
-    G.missionIndex = d.missionIndex || 0;
-    G.bestCash = d.bestCash || 0;
-    G.stats = { kills: d.kills || 0, carsStolen: d.carsStolen || 0 };
-    return d;
-  } catch { return null; }
+    const data = JSON.parse(raw);
+    if (typeof data !== 'object' || data === null) return null;
+    return data;
+  } catch {
+    return null;
+  }
 }
 
-export function hasSave() {
-  try { return !!localStorage.getItem(KEY); } catch { return false; }
+export function storeSave(data) {
+  try {
+    window.localStorage.setItem(KEY, JSON.stringify(data));
+  } catch {
+    // Storage off: the session still plays, it just does not persist.
+  }
 }

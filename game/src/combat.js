@@ -1,196 +1,190 @@
-// combat.js — shooting, melee, damage, pickups.
+// Combat: hitscan pistol, fists, pickups and the gang shooters of mission 3.
+// Shots are cone-tested against people and police cars with plain math — no
+// raycaster — and leave a fading tracer line plus a muzzle flash.
 import * as THREE from 'three';
-import { PITCH, HALF } from './city.js';
-import { makePersonMesh } from './people.js';
+import { range } from './rng.js';
+import { fleeFrom, killPed } from './people.js';
+import { damagePlayer } from './vehicles.js';
 
-export function initCombat(G) {
-  G.ammo = 12; G.ammoReserve = 48;
-  G.pickups = [];
-  G.tracers = [];
-  G.gang = [];
-  // pickups: health / armor / ammo crates around town
-  const spots = [[-52, -52], [52, 52], [-104, 104], [104, -104], [0, -104], [-156, 52], [156, -52], [52, -156]];
-  const kinds = ['health', 'armor', 'ammo', 'health', 'ammo', 'armor', 'health', 'ammo'];
-  spots.forEach(([x, z], i) => spawnPickup(G, kinds[i], x, z));
+export function updateTracers(G, dt) {
+  for (const t of [...G.tracers]) {
+    t.life -= dt;
+    t.line.material.opacity = Math.max(0, t.life / 0.12);
+    if (t.life <= 0) {
+      G.scene.remove(t.line);
+      G.tracers.splice(G.tracers.indexOf(t), 1);
+    }
+  }
+  if (G.muzzle) {
+    G.muzzle.life -= dt;
+    G.muzzle.light.intensity = Math.max(0, G.muzzle.life * 40);
+    if (G.muzzle.life <= 0) {
+      G.scene.remove(G.muzzle.light);
+      G.muzzle = null;
+    }
+  }
 }
 
-export function spawnPickup(G, kind, x, z) {
-  const colors = { health: 0x2ecc71, armor: 0x3498db, ammo: 0xf39c12, cash: 0x27ae60 };
-  const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshLambertMaterial({ color: colors[kind] || 0xffffff }));
-  m.position.set(x, 0.8, z);
-  m.rotation.y = Math.PI / 4;
-  G.scene.add(m);
-  const label = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.25, 1.15),
-    new THREE.MeshBasicMaterial({ color: 0xffffff }));
-  label.position.set(x, 1.45, z);
-  G.scene.add(label);
-  G.pickups.push({ kind, mesh: m, label, pos: new THREE.Vector3(x, 0, z), bob: Math.random() * 6 });
+function addTracer(G, from, to) {
+  const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: '#ffe9a8', transparent: true, opacity: 1 }));
+  G.scene.add(line);
+  G.tracers.push({ line, life: 0.12 });
+  const light = new THREE.PointLight(0xffc860, 14, 12);
+  light.position.copy(from);
+  G.scene.add(light);
+  G.muzzle = { light, life: 0.06 };
 }
 
-function rayHit(G, origin, dir, maxDist) {
-  // simple sphere tests against peds, foot cops, gang, traffic cars
-  let best = null, bd = maxDist;
-  const test = (pos, r, ref) => {
-    const to = pos.clone().sub(origin);
-    const t = to.dot(dir);
-    if (t < 0 || t > bd) return;
-    const closest = origin.clone().addScaledVector(dir, t);
-    if (closest.distanceTo(pos) < r) { bd = t; best = { ref, dist: t }; }
+// Nearest person inside a cone from `from` along `dir` (radians), within range.
+function coneTarget(G, from, dir, rangeM, halfAngle) {
+  let best = null;
+  let bestD = rangeM;
+  const consider = (x, z, obj) => {
+    const dx = x - from.x;
+    const dz = z - from.z;
+    const d = Math.hypot(dx, dz);
+    if (d > bestD || d < 0.5) return;
+    const ang = Math.atan2(dx, dz);
+    let diff = ang - dir;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    if (Math.abs(diff) < halfAngle) { best = obj; bestD = d; }
   };
-  for (const p of G.peds) test(p.pos.clone().setY(1.1), 0.8, { type: 'ped', obj: p });
-  for (const c of G.footCops) test(c.pos.clone().setY(1.1), 0.8, { type: 'cop', obj: c });
-  for (const gm of G.gang) test(gm.pos.clone().setY(1.1), 0.8, { type: 'gang', obj: gm });
-  for (const t of G.traffic) test(t.pos.clone().setY(0.8), 1.6, { type: 'car', obj: t });
-  for (const pc of G.police) test(pc.pos.clone().setY(0.8), 1.6, { type: 'police', obj: pc });
+  for (const ped of G.peds) if (ped.state !== 'dead') consider(ped.x, ped.z, { kind: 'ped', ref: ped, dist: bestD });
+  for (const cop of G.cops) consider(cop.x, cop.z, { kind: 'cop', ref: cop, dist: bestD });
+  for (const g of G.gang) if (g.health > 0) consider(g.x, g.z, { kind: 'gang', ref: g, dist: bestD });
   return best;
 }
 
 export function shoot(G) {
-  if (G.ammo <= 0) { G.audio?.click(); return; }
-  G.ammo -= 1;
-  const origin = G.playerPos.clone().setY(1.5);
-  const dir = new THREE.Vector3();
-  G.camera.getWorldDirection(dir);
-  if (G.player.inCar) dir.set(Math.sin(G.playerCar.heading), 0, Math.cos(G.playerCar.heading));
-  const hit = rayHit(G, origin, dir, 60);
-  const end = hit ? origin.clone().addScaledVector(dir, hit.dist) : origin.clone().addScaledVector(dir, 60);
-  // tracer
-  const geo = new THREE.BufferGeometry().setFromPoints([origin, end]);
-  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe27a }));
-  G.scene.add(line);
-  G.tracers.push({ line, t: 0.08 });
-  // muzzle flash
-  const flash = new THREE.Mesh(new THREE.SphereGeometry(0.18, 6, 5),
-    new THREE.MeshBasicMaterial({ color: 0xffe27a }));
-  flash.position.copy(origin).addScaledVector(dir, 1.2);
-  G.scene.add(flash);
-  G.tracers.push({ line: flash, t: 0.06, isMesh: true });
-  G.audio?.gunshot();
-  G.lastShotPos = origin.clone();
-  if (hit) {
-    if (hit.ref.type === 'ped') {
-      const p = hit.ref.obj;
-      G.scene.remove(p.mesh);
-      G.peds.splice(G.peds.indexOf(p), 1);
-      G.addWanted(2, 'killed a civilian');
-    } else if (hit.ref.type === 'cop') {
-      const c = hit.ref.obj;
-      G.scene.remove(c.mesh);
-      G.footCops.splice(G.footCops.indexOf(c), 1);
-      G.addWanted(2, 'killed a cop');
-    } else if (hit.ref.type === 'gang') {
-      const gm = hit.ref.obj;
-      gm.hp -= 34;
-      if (gm.hp <= 0) {
-        G.scene.remove(gm.mesh);
-        G.gang.splice(G.gang.indexOf(gm), 1);
-        G.addCash(120);
-        G.hudPopup('+$120', '#7CFC00');
+  const p = G.player;
+  if (p.ammo <= 0) {
+    G.audio.click();
+    return;
+  }
+  p.ammo -= 1;
+  G.audio.shot();
+  const from = new THREE.Vector3(p.x, 1.45, p.z);
+  const dir = p.heading + range(G.rng, -0.03, 0.03);
+  const target = coneTarget(G, { x: p.x, z: p.z }, dir, 46, 0.16);
+  const end = target
+    ? new THREE.Vector3(target.ref.x, 1.2, target.ref.z)
+    : new THREE.Vector3(p.x + Math.sin(dir) * 46, 1.2, p.z + Math.cos(dir) * 46);
+  addTracer(G, from, end);
+  if (target) {
+    if (target.kind === 'ped') {
+      target.ref.health -= 50;
+      if (target.ref.health <= 0) killPed(G, target.ref, false);
+      else fleeFrom(G, target.ref.x, target.ref.z, 20);
+    } else if (target.kind === 'cop') {
+      G.wanted.heat = Math.min(100, G.wanted.heat + 30);
+      const i = G.cops.indexOf(target.ref);
+      if (i >= 0) {
+        G.scene.remove(target.ref.mesh);
+        G.cops.splice(i, 1);
       }
-    } else if (hit.ref.type === 'car' || hit.ref.type === 'police') {
-      hit.ref.obj.speed = 0;
-      G.addWanted(1, 'shot at a car');
+    } else if (target.kind === 'gang') {
+      target.ref.health -= 50;
+      if (target.ref.health <= 0) {
+        target.ref.mesh.rotation.x = -Math.PI / 2;
+        setTimeout(() => G.scene.remove(target.ref.mesh), 5000);
+      }
     }
   }
-  G.hud?.update();
+  fleeFrom(G, p.x, p.z, 18);
 }
 
 export function punch(G) {
   const p = G.player;
-  if (p.punchCd > 0) return;
-  p.punchCd = 0.45;
-  G.audio?.thud();
-  const reach = 2.2;
-  const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
-  const tryHit = (pos, r, onHit) => {
-    const dx = pos.x - p.pos.x, dz = pos.z - p.pos.z;
-    if (dx * dx + dz * dz < (reach + r) * (reach + r) && (dx * fx + dz * fz) > -0.5) onHit();
-  };
-  for (const ped of [...G.peds]) {
-    tryHit(ped.pos, 0.6, () => {
-      G.scene.remove(ped.mesh);
-      G.peds.splice(G.peds.indexOf(ped), 1);
-      G.addWanted(1, 'assaulted a civilian');
-    });
+  G.audio.punch();
+  const from = { x: p.x, z: p.z };
+  const target = coneTarget(G, from, p.heading, 2.6, 0.7);
+  if (!target) return;
+  if (target.kind === 'ped') {
+    target.ref.health -= 35;
+    if (target.ref.health <= 0) killPed(G, target.ref, false);
+    else fleeFrom(G, target.ref.x, target.ref.z, 18);
+  } else if (target.kind === 'cop') {
+    G.wanted.heat = Math.min(100, G.wanted.heat + 12);
+    const i = G.cops.indexOf(target.ref);
+    if (i >= 0) {
+      G.scene.remove(target.ref.mesh);
+      G.cops.splice(i, 1);
+    }
+  } else if (target.kind === 'gang') {
+    target.ref.health -= 35;
+    if (target.ref.health <= 0) target.ref.mesh.rotation.x = -Math.PI / 2;
   }
-  for (const c of [...G.footCops]) {
-    tryHit(c.pos, 0.6, () => {
-      G.scene.remove(c.mesh);
-      G.footCops.splice(G.footCops.indexOf(c), 1);
-      G.addWanted(2, 'beat a cop');
-    });
-  }
-  for (const gm of [...G.gang]) {
-    tryHit(gm.pos, 0.6, () => {
-      gm.hp -= 25;
-      if (gm.hp <= 0) {
-        G.scene.remove(gm.mesh);
-        G.gang.splice(G.gang.indexOf(gm), 1);
-        G.addCash(120);
-        G.hudPopup('+$120', '#7CFC00');
+}
+
+// Gang shooters: stand their ground and fire at the player with spread.
+export function updateGang(G, dt) {
+  const p = G.player;
+  for (const g of G.gang) {
+    if (g.health <= 0) continue;
+    const dx = p.x - g.x;
+    const dz = p.z - g.z;
+    const dist = Math.hypot(dx, dz);
+    g.heading = Math.atan2(dx, dz);
+    g.mesh.rotation.y = g.heading;
+    g.shootAt -= dt;
+    if (dist < 42 && g.shootAt <= 0) {
+      g.shootAt = range(G.rng, 0.9, 1.6);
+      const from = new THREE.Vector3(g.x, 1.45, g.z);
+      const dir = g.heading + range(G.rng, -0.09, 0.09);
+      addTracer(G, from, new THREE.Vector3(p.x, 1.3, p.z));
+      if (Math.abs(dir - Math.atan2(dx, dz)) < 0.12 && dist < 40) {
+        damagePlayer(G, 8);
+        p.lastHurt = G.time;
       }
-    });
+      G.audio.shot();
+    }
   }
 }
 
-export function updateCombat(G, dt) {
-  for (const tr of [...G.tracers]) {
-    tr.t -= dt;
-    if (tr.t <= 0) {
-      G.scene.remove(tr.line);
-      if (tr.line.geometry) tr.line.geometry.dispose();
-      G.tracers.splice(G.tracers.indexOf(tr), 1);
-    }
-  }
-  // pickups bob + collect
-  for (const pk of [...G.pickups]) {
-    pk.bob += dt * 2;
-    pk.mesh.position.y = 0.8 + Math.sin(pk.bob) * 0.15;
-    pk.mesh.rotation.y += dt;
-    pk.label.position.y = 1.45 + Math.sin(pk.bob) * 0.15;
-    if (pk.pos.distanceTo(G.playerPos) < 1.6) {
-      if (pk.kind === 'health') { G.player.health = Math.min(100, G.player.health + 40); G.hudPopup('+40 HP', '#2ecc71'); }
-      if (pk.kind === 'armor') { G.player.armor = Math.min(100, G.player.armor + 50); G.hudPopup('+50 Armour', '#3498db'); }
-      if (pk.kind === 'ammo') { G.ammoReserve += 36; G.hudPopup('+36 Ammo', '#f39c12'); }
-      G.audio?.chime();
-      G.scene.remove(pk.mesh); G.scene.remove(pk.label);
-      G.pickups.splice(G.pickups.indexOf(pk), 1);
-      // respawn elsewhere later
-      setTimeout(() => {
-        if (G.state === 'play') spawnPickup(G, pk.kind, (G.rng() - 0.5) * 300, (G.rng() - 0.5) * 300);
-      }, 20000);
-    }
-  }
-  // gang members chase the player
-  for (const gm of G.gang) {
-    const toP = G.playerPos.clone().sub(gm.pos).setY(0);
-    const dist = toP.length();
-    if (dist > 0.6) {
-      toP.normalize();
-      gm.heading = Math.atan2(toP.x, toP.z);
-      gm.pos.addScaledVector(toP, 4.2 * dt);
-      gm.phase += dt * 8;
-    }
-    gm.mesh.position.copy(gm.pos);
-    gm.mesh.rotation.y = gm.heading;
-    const u = gm.mesh.userData;
-    const swing = Math.sin(gm.phase) * 0.5;
-    u.legL.rotation.x = swing; u.legR.rotation.x = -swing;
-    if (dist < 1.8 && gm.cd <= 0 && !G.player.inCar) {
-      gm.cd = 1.0;
-      G.hurtPlayer(10, 'gang');
-    }
-    gm.cd = Math.max(0, gm.cd - dt);
-  }
-}
-
-export function spawnGang(G, x, z, n) {
-  for (let i = 0; i < n; i++) {
-    const mesh = makePersonMesh(0x8a5a3b, 0x1a1a1a, 0x111111);
+export function spawnPickups(G) {
+  const defs = [
+    { kind: 'health', x: 26, z: 130, color: '#3ddc5f' },
+    { kind: 'health', x: -130, z: -78, color: '#3ddc5f' },
+    { kind: 'armour', x: -26, z: -130, color: '#4aa8ff' },
+    { kind: 'armour', x: 130, z: 26, color: '#4aa8ff' },
+    { kind: 'ammo', x: 78, z: -130, color: '#ffd23e' },
+    { kind: 'ammo', x: -130, z: 78, color: '#ffd23e' },
+  ];
+  for (const d of defs) {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 0.9, 0.9),
+      new THREE.MeshStandardMaterial({ color: d.color, emissive: d.color, emissiveIntensity: 0.7 }),
+    );
+    mesh.position.set(d.x, 1.1, d.z);
     G.scene.add(mesh);
-    const pos = new THREE.Vector3(x + (G.rng() - 0.5) * 12, 0, z + (G.rng() - 0.5) * 12);
-    mesh.position.copy(pos);
-    G.gang.push({ mesh, pos, heading: 0, hp: 100, cd: 0, phase: G.rng() * 6 });
+    G.pickups.push({ ...d, mesh, taken: false, respawnAt: 0, phase: 0 });
+  }
+}
+
+export function updatePickups(G, dt) {
+  const p = G.player;
+  for (const pk of G.pickups) {
+    if (pk.taken) {
+      if (G.time > pk.respawnAt) {
+        pk.taken = false;
+        pk.mesh.visible = true;
+      }
+      continue;
+    }
+    pk.phase += dt * 3;
+    pk.mesh.rotation.y += dt * 2;
+    pk.mesh.position.y = 1.1 + Math.sin(pk.phase) * 0.15;
+    if (Math.hypot(p.x - pk.x, p.z - pk.z) < 1.8) {
+      pk.taken = true;
+      pk.mesh.visible = false;
+      pk.respawnAt = G.time + 60;
+      G.audio.pickup();
+      if (pk.kind === 'health') p.health = Math.min(100, p.health + 50);
+      if (pk.kind === 'armour') p.armour = Math.min(100, p.armour + 50);
+      if (pk.kind === 'ammo') p.ammoReserve += 24;
+      G.popup(pk.kind === 'health' ? '+50 HEALTH' : pk.kind === 'armour' ? '+50 ARMOUR' : '+24 AMMO');
+    }
   }
 }

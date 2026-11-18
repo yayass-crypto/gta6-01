@@ -1,78 +1,75 @@
-// shots.js — ?shot=start|drive|chase|mission staging for screenshots.
-// Each scene plays the real rules forward to a representative frame, renders
-// twice, then sets window.__shotReady = true. Deterministic-ish via seed.
-import * as THREE from 'three';
+// Screenshot scenes behind ?shot=start|drive|chase|mission. Each one sets up
+// the real game state, then plays the real rules forward for a fixed number of
+// steps with a simple autopilot, so the frame is what a short session really
+// looks like — and the same seed always gives the same frame.
+import { makeCar, spawnPolice } from './vehicles.js';
 import { startMission } from './missions.js';
 
-export function stageShot(G, name, seed) {
-  G.seed = seed || 1;
-  const step = (n, dt = 1 / 60) => { for (let i = 0; i < n; i++) G.tick(dt, true); };
+const STEP = 1 / 60;
 
-  if (name === 'start') {
-    // Title screen over the downtown skyline.
-    G.state = 'title';
-    G.camera.position.set(-60, 42, 120);
-    G.camera.lookAt(0, 20, 0);
-    G.showTitle(true);
-  } else if (name === 'drive') {
-    G.startGame();
-    // Danny in a car downtown, driving east down the z=0 road (a road centre line)
-    const car = G.playerCar;
-    car.pos.set(-104, 0, 0);
-    car.heading = Math.PI / 2;
+function steps(G, stepFn, seconds, inputFn) {
+  const n = Math.floor(seconds / STEP);
+  for (let i = 0; i < n; i += 1) stepFn(G, STEP, inputFn ? inputFn(i) : {});
+}
+
+// Put the player in a car on a straight road, heading north.
+function putPlayerInCar(G, x, z) {
+  const car = makeCar(G, 'sedan', x, z, 0);
+  car.kind = 'player';
+  G.cars.push(car);
+  G.playerCar = car;
+  G.player.onFoot = false;
+  G.player.x = x;
+  G.player.z = z;
+  return car;
+}
+
+export function stageShot(G, name, stepFn) {
+  const noInput = () => ({});
+  if (name === 'drive') {
+    G.screen = 'play';
+    const car = putPlayerInCar(G, 0, 150);
+    car.heading = Math.PI; // north, down the central road through downtown
     car.speed = 24;
-    G.enterCar(car);
-    G.camYaw = Math.PI / 2;
-    step(80);
-  } else if (name === 'chase') {
-    G.startGame();
-    // 3-star chase north up the x=0 road; police close behind
-    const car = G.playerCar;
-    car.pos.set(0, 0, -104);
-    car.heading = 0;
-    car.speed = 28;
-    G.enterCar(car);
-    G.setWanted(3, 'staged chase');
-    for (const cop of G.police) {
-      cop.pos.set(car.pos.x + (G.rng() - 0.5) * 16, 0, car.pos.z - 14 - G.rng() * 10);
-      cop.heading = 0;
-      cop.speed = 26;
-    }
-    // hold W so the car keeps accelerating through rams and traffic bumps
-    G.keys['KeyW'] = true;
-    step(60);
-    G.keys['KeyW'] = false;
-    G.damageFlash = 0.3; // keep some red drama, not a full washout
-    // one cop pulling alongside so the chase reads in frame; car keeps speed
-    if (G.police[0]) {
-      G.police[0].pos.set(car.pos.x - 7, 0, car.pos.z - 2);
-      G.police[0].heading = car.heading;
-      G.police[0].speed = car.speed;
-      G.police[0].mesh.position.copy(G.police[0].pos);
-      G.police[0].mesh.rotation.y = G.police[0].heading;
-    }
-    car.speed = 24;
-    G.playerSpeed = 24 * 3.6; // speedometer reads the staged speed
-    G.hud?.update();
-  } else if (name === 'mission') {
-    G.startGame();
-    startMission(G, 0);
-    // Danny in the marked YELLOW sedan, delivery leg, driving east on the z=104 road
-    const car = G.markedCar;
-    G.traffic.splice(G.traffic.indexOf(car), 1);
-    car.pos.set(-156, 0, 104);
-    car.heading = Math.PI / 2;
-    car.speed = 20;
-    car.mesh.position.copy(car.pos);
-    car.mesh.rotation.y = car.heading;
-    G.enterCar(car);
-    G.mission.step = 1; // delivery leg: waypoint + timer visible
-    G.mission.target.set(156, 0, -52);
-    G.mission.timer = 82;
-    G.beacon.position.set(156, 15, -52);
-    step(50);
+    G.camMode = 'chase';
+    steps(G, stepFn, 6, () => ({ forward: true }));
+    return;
   }
-  G.render();
-  G.render();
-  window.__shotReady = true;
+  if (name === 'chase') {
+    G.screen = 'play';
+    const car = putPlayerInCar(G, 0, 0);
+    car.heading = Math.PI; // north up the central road, police on the tail
+    car.speed = 26;
+    G.camMode = 'chase';
+    G.wanted.heat = 45; // 2 stars
+    spawnPolice(G, 2);
+    // A short burst, straight ahead: a long chase lets the rams and the
+    // weaving shove the car into a wall and pin it, which reads as a crash,
+    // not a chase.
+    steps(G, stepFn, 3, () => ({ forward: true }));
+    return;
+  }
+  if (name === 'mission') {
+    G.screen = 'play';
+    startMission(G, 0);
+    const s = G.city.spots;
+    G.player.x = s.sedan.x - 6;
+    G.player.z = s.sedan.z + 10;
+    G.player.heading = Math.atan2(s.sedan.x - G.player.x, s.sedan.z - G.player.z);
+    G.camYaw = G.player.heading;
+    G.camPitch = 0.32;
+    G.camMode = 'follow';
+    steps(G, stepFn, 3, noInput);
+    return;
+  }
+  // Default: the title screen over a living city at dusk.
+  G.screen = 'title';
+  G.clockH = 18.5;
+  G.camMode = 'cinematic';
+  const titleEl = document.getElementById('titleScreen');
+  if (titleEl) {
+    titleEl.style.display = 'flex';
+    titleEl.style.background = 'linear-gradient(rgba(5,8,14,0.15), rgba(5,8,14,0.78))';
+  }
+  steps(G, stepFn, 5, noInput);
 }
